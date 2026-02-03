@@ -25,23 +25,23 @@ async function init() {
     // 1. PoseEngine 초기화
     poseEngine = new PoseEngine("./my_model/");
     const { maxPredictions, webcam } = await poseEngine.init({
-      size: 200,
+      size: 400, // 게임 화면을 위해 크기 증가 권장 (원본 비율 유지)
       flip: true
     });
 
     // 2. Stabilizer 초기화
     stabilizer = new PredictionStabilizer({
-      threshold: 0.7,
+      threshold: 0.8, // 민감도 조절
       smoothingFrames: 3
     });
 
-    // 3. GameEngine 초기화 (선택적)
+    // 3. GameEngine 초기화
     gameEngine = new GameEngine();
 
     // 4. 캔버스 설정
     const canvas = document.getElementById("canvas");
-    canvas.width = 200;
-    canvas.height = 200;
+    canvas.width = 400; // 게임 영역 크기
+    canvas.height = 400;
     ctx = canvas.getContext("2d");
 
     // 5. Label Container 설정
@@ -53,17 +53,44 @@ async function init() {
 
     // 6. PoseEngine 콜백 설정
     poseEngine.setPredictionCallback(handlePrediction);
-    poseEngine.setDrawCallback(drawPose);
+    // Draw callback에서 게임 렌더링도 같이 처리
+    poseEngine.setDrawCallback(gameLoop);
 
     // 7. PoseEngine 시작
     poseEngine.start();
 
     stopBtn.disabled = false;
+
+    // UI 초기화 // NEW
+    setupGameUI();
+
   } catch (error) {
     console.error("초기화 중 오류 발생:", error);
     alert("초기화에 실패했습니다. 콘솔을 확인하세요.");
     startBtn.disabled = false;
   }
+}
+
+function setupGameUI() {
+  // 게임 시작 버튼에 이벤트 연결 (이미 HTML에 있을 수 있음)
+  // 여기서는 GameEngine 콜백만 연결
+
+  gameEngine.setScoreChangeCallback((score, level) => {
+    // UI 엘리먼트가 존재한다고 가정 (없으면 콘솔)
+    const scoreEl = document.getElementById("scoreDisplay") || console.log;
+    if (scoreEl.innerText !== undefined) scoreEl.innerText = `Score: ${score} (Lv.${level})`;
+  });
+
+  gameEngine.setHpChangeCallback((hp) => {
+    const hpEl = document.getElementById("hpDisplay");
+    if (hpEl) hpEl.innerText = `HP: ${"❤️".repeat(hp)}`;
+  });
+
+  gameEngine.setGameEndCallback((score, level) => {
+    alert(`Game Over! Score: ${score}`);
+    document.getElementById("startBtn").disabled = false;
+    document.getElementById("stopBtn").disabled = true;
+  });
 }
 
 /**
@@ -77,8 +104,8 @@ function stop() {
     poseEngine.stop();
   }
 
-  if (gameEngine && gameEngine.isGameActive) {
-    gameEngine.stop();
+  if (gameEngine) {
+    gameEngine.gameOver(); // stop 대신 gameOver로 명확히
   }
 
   if (stabilizer) {
@@ -109,50 +136,54 @@ function handlePrediction(predictions, pose) {
   const maxPredictionDiv = document.getElementById("max-prediction");
   maxPredictionDiv.innerHTML = stabilized.className || "감지 중...";
 
-  // 4. GameEngine에 포즈 전달 (게임 모드일 경우)
-  if (gameEngine && gameEngine.isGameActive && stabilized.className) {
+  // 4. GameEngine에 포즈 전달
+  if (gameEngine && stabilized.className) {
     gameEngine.onPoseDetected(stabilized.className);
   }
 }
 
 /**
- * 포즈 그리기 콜백
+ * 게임 루프 (PoseEngine의 Draw 콜백에서 호출됨)
  * @param {Object} pose - PoseNet 포즈 데이터
  */
-function drawPose(pose) {
+function gameLoop(pose) {
+  // 1. 웹캠 배경 그리기 (선택사항, 게임 몰입감을 위해 투명도를 주거나 끌 수 있음)
   if (poseEngine.webcam && poseEngine.webcam.canvas) {
-    ctx.drawImage(poseEngine.webcam.canvas, 0, 0);
+    ctx.globalAlpha = 0.3; // 웹캠 흐릿하게
+    ctx.drawImage(poseEngine.webcam.canvas, 0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.globalAlpha = 1.0;
+  }
 
-    // 키포인트와 스켈레톤 그리기
-    if (pose) {
+  // 2. 게임 상태 업데이트
+  if (gameEngine) {
+    gameEngine.update();
+    gameEngine.draw(ctx, ctx.canvas.width, ctx.canvas.height);
+  }
+
+  // 3. 포즈 키포인트 (디버깅용, 게임 중엔 방해되면 주석 처리)
+  /*
+  if (pose) {
       const minPartConfidence = 0.5;
       tmPose.drawKeypoints(pose.keypoints, minPartConfidence, ctx);
-      tmPose.drawSkeleton(pose.keypoints, minPartConfidence, ctx);
-    }
   }
+  */
 }
 
-// 게임 모드 시작 함수 (선택적 - 향후 확장용)
-function startGameMode(config) {
+// 게임 모드 시작 함수 (버튼 클릭 시 호출)
+function startGameMode() {
   if (!gameEngine) {
     console.warn("GameEngine이 초기화되지 않았습니다.");
     return;
   }
 
-  gameEngine.setCommandChangeCallback((command) => {
-    console.log("새로운 명령:", command);
-    // UI 업데이트 로직 추가 가능
+  // 설정 전달
+  gameEngine.start({
+    // timeLimit: 0 // 무제한
   });
 
-  gameEngine.setScoreChangeCallback((score, level) => {
-    console.log(`점수: ${score}, 레벨: ${level}`);
-    // UI 업데이트 로직 추가 가능
-  });
-
-  gameEngine.setGameEndCallback((finalScore, finalLevel) => {
-    console.log(`게임 종료! 최종 점수: ${finalScore}, 최종 레벨: ${finalLevel}`);
-    alert(`게임 종료!\n최종 점수: ${finalScore}\n최종 레벨: ${finalLevel}`);
-  });
-
-  gameEngine.start(config);
+  document.getElementById("startBtn").disabled = true; // 중복 시작 방지
 }
+
+// 전역 함수 노출 (HTML 버튼에서 호출용)
+window.startGameMode = startGameMode;
+

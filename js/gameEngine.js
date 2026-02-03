@@ -1,51 +1,68 @@
 /**
  * gameEngine.js
- * 게임 단계, 명령, 점수, 제한시간 등 게임 규칙 전체를 담당
+ * "Body Dodge" Game Logic
  *
- * 포즈 인식을 활용한 게임 로직을 관리하는 엔진
- * (현재는 기본 템플릿이므로 향후 게임 로직 추가 가능)
+ * Rules:
+ * - 3 Lanes (Left, Center, Right)
+ * - Obstacles fall from top
+ * - Player dodges obstacles to survive
  */
 
 class GameEngine {
   constructor() {
     this.score = 0;
     this.level = 1;
-    this.timeLimit = 0;
-    this.currentCommand = null;
-    this.isGameActive = false;
-    this.gameTimer = null;
-    this.onCommandChange = null; // 명령 변경 콜백
-    this.onScoreChange = null; // 점수 변경 콜백
-    this.onGameEnd = null; // 게임 종료 콜백
+    this.isPlaying = false;
+    this.isGameOver = false;
+
+    // Player State
+    // 0: Left, 1: Center, 2: Right
+    this.playerLane = 1; 
+    
+    // Game Objects
+    this.obstacles = [];
+    this.particles = []; // For explosion effects (optional)
+    
+    // Configuration
+    this.laneCount = 3;
+    this.spawnTimer = 0;
+    this.spawnInterval = 60; // Frames between spawns (approx 1 sec at 60fps)
+    this.baseSpeed = 3;
+    this.hp = 3;
+
+    // Callbacks
+    this.onScoreChange = null;
+    this.onGameEnd = null;
+    this.onHpChange = null; // New callback for HP updates
   }
 
   /**
-   * 게임 시작
-   * @param {Object} config - 게임 설정 { timeLimit, commands }
+   * Start Game
    */
-  start(config = {}) {
-    this.isGameActive = true;
+  start() {
+    this.isPlaying = true;
+    this.isGameOver = false;
     this.score = 0;
     this.level = 1;
-    this.timeLimit = config.timeLimit || 60; // 기본 60초
-    this.commands = config.commands || []; // 게임 명령어 배열
+    this.hp = 3;
+    this.obstacles = [];
+    this.playerLane = 1;
+    this.spawnTimer = 0;
+    this.baseSpeed = 3;
 
-    if (this.timeLimit > 0) {
-      this.startTimer();
-    }
-
-    // 첫 번째 명령 발급 (게임 모드일 경우)
-    if (this.commands.length > 0) {
-      this.issueNewCommand();
-    }
+    if (this.onScoreChange) this.onScoreChange(this.score, this.level);
+    if (this.onHpChange) this.onHpChange(this.hp);
+    
+    console.log("Game Started: Body Dodge");
   }
 
   /**
-   * 게임 중지
+   * Stop/Game Over
    */
-  stop() {
-    this.isGameActive = false;
-    this.clearTimer();
+  gameOver() {
+    this.isPlaying = false;
+    this.isGameOver = true;
+    console.log("Game Over!", this.score);
 
     if (this.onGameEnd) {
       this.onGameEnd(this.score, this.level);
@@ -53,110 +70,215 @@ class GameEngine {
   }
 
   /**
-   * 타이머 시작
+   * Update Game State (called every frame)
    */
-  startTimer() {
-    this.gameTimer = setInterval(() => {
-      this.timeLimit--;
+  update() {
+    if (!this.isPlaying || this.isGameOver) return;
 
-      if (this.timeLimit <= 0) {
-        this.stop();
+    // 1. Spawn Obstacles
+    this.spawnTimer++;
+    // Decrease interval as level increases to make it harder
+    const currentInterval = Math.max(20, this.spawnInterval - (this.level * 2));
+    
+    if (this.spawnTimer >= currentInterval) {
+      this.spawnObstacle();
+      this.spawnTimer = 0;
+    }
+
+    // 2. Update Obstacles
+    const speed = this.baseSpeed + (this.level * 0.5);
+    
+    for (let i = this.obstacles.length - 1; i >= 0; i--) {
+      let obs = this.obstacles[i];
+      obs.y += speed;
+
+      // Check Collision
+      if (this.checkCollision(obs)) {
+        this.handleCollision(obs);
+        this.obstacles.splice(i, 1);
+        continue;
       }
-    }, 1000);
-  }
 
-  /**
-   * 타이머 정리
-   */
-  clearTimer() {
-    if (this.gameTimer) {
-      clearInterval(this.gameTimer);
-      this.gameTimer = null;
+      // Remove if off screen
+      if (obs.y > 1000) { // Assuming height is handled elsewhere or large enough
+         // Missed coin? or just passed obstacle
+         this.obstacles.splice(i, 1);
+      }
+    }
+
+    // 3. Level Up Condition (Time based or Score based)
+    // Simple Score based: Every 500 points
+    const newLevel = Math.floor(this.score / 500) + 1;
+    if (newLevel > this.level) {
+      this.level = newLevel;
+      // Bonus HP?
+      if (this.onScoreChange) this.onScoreChange(this.score, this.level);
     }
   }
 
   /**
-   * 새로운 명령 발급
+   * Spawn a new obstacle or coin
    */
-  issueNewCommand() {
-    if (this.commands.length === 0) return;
+  spawnObstacle() {
+    // Random Lane: 0, 1, 2
+    const lane = Math.floor(Math.random() * this.laneCount);
+    
+    // Type: 80% Obstacle (Bomb), 20% Coin
+    const isCoin = Math.random() > 0.8;
+    
+    this.obstacles.push({
+      lane: lane,
+      y: -100, // Start above screen
+      type: isCoin ? 'coin' : 'obstacle',
+      width: 50, // Relative size
+      height: 50
+    });
+  }
 
-    const randomIndex = Math.floor(Math.random() * this.commands.length);
-    this.currentCommand = this.commands[randomIndex];
+  /**
+   * Check collision between player and obstacle
+   */
+  checkCollision(obs) {
+    // Simple lane check + Y-axis check
+    // Player is effectively at the bottom, e.g., Y=80% to 90%
+    // Let's assume passed Canvas Height is 100% for logic, but we need pixel values for drawing.
+    // Ideally update() shouldn't depend on pixels, but let's use a standard 0-1 or similar.
+    // Here we will pretend the game area is 600px high for logic roughly.
+    
+    // Player Y zone: roughly 500-550
+    const playerY = 500; 
+    const playerHeight = 60;
+    
+    if (obs.lane === this.playerLane) {
+      if (obs.y + obs.height > playerY && obs.y < playerY + playerHeight) {
+        return true;
+      }
+    }
+    return false;
+  }
 
-    if (this.onCommandChange) {
-      this.onCommandChange(this.currentCommand);
+  /**
+   * Handle Collision event
+   */
+  handleCollision(obs) {
+    if (obs.type === 'coin') {
+      this.score += 100;
+      if (this.onScoreChange) this.onScoreChange(this.score, this.level);
+    } else if (obs.type === 'obstacle') {
+      this.hp--;
+      if (this.onHpChange) this.onHpChange(this.hp);
+      
+      if (this.hp <= 0) {
+        this.gameOver();
+      }
     }
   }
 
   /**
-   * 포즈 인식 결과 처리
-   * @param {string} detectedPose - 인식된 포즈 이름
+   * Draw Game Elements on Canvas
+   * @param {CanvasRenderingContext2D} ctx 
+   * @param {number} width 
+   * @param {number} height 
    */
-  onPoseDetected(detectedPose) {
-    if (!this.isGameActive) return;
+  draw(ctx, width, height) {
+    // Clear handled by main loop usually, but good practice if standalone
+    // ctx.clearRect(0, 0, width, height);
 
-    // 현재 명령과 일치하는지 확인
-    if (this.currentCommand && detectedPose === this.currentCommand) {
-      this.addScore(10); // 점수 추가
-      this.issueNewCommand(); // 새로운 명령 발급
+    // 1. Draw Lanes (Visual Guide)
+    const laneWidth = width / this.laneCount;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+    ctx.lineWidth = 2;
+    for (let i = 1; i < this.laneCount; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * laneWidth, 0);
+        ctx.lineTo(i * laneWidth, height);
+        ctx.stroke();
+    }
+
+    // 2. Draw Player
+    const playerX = (this.playerLane * laneWidth) + (laneWidth / 2);
+    // Logic Y was 500/600 approx 83%. Let's scale to height.
+    const playerY = height * 0.85; 
+    const playerSize = Math.min(laneWidth * 0.6, 60);
+
+    ctx.fillStyle = this.hp > 1 ? "#00ff00" : "#ff0000"; // Green ok, Red danger
+    if (this.isGameOver) ctx.fillStyle = "#555";
+
+    // Draw centered square
+    ctx.fillRect(playerX - playerSize/2, playerY - playerSize/2, playerSize, playerSize);
+    
+    // 3. Draw Obstacles
+    // Scale Y logic (based on 600 reference) to actual height
+    // or just use normalized Y in future. For now, let's map logic speed to pixels roughly.
+    // If logic assumes 600px, scale factor = height / 600.
+    const scaleY = height / 600;
+
+    this.obstacles.forEach(obs => {
+      const obsX = (obs.lane * laneWidth) + (laneWidth / 2);
+      const obsY = obs.y * scaleY;
+      const obsSize = obs.width * scaleY; // square items
+
+      ctx.fillStyle = obs.type === 'coin' ? "gold" : "brown"; // Coin or Poop/Rock
+      
+      // Simple Circle for items
+      ctx.beginPath();
+      ctx.arc(obsX, obsY, obsSize/2, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Text icon overlay (optional)
+      ctx.fillStyle = "white";
+      ctx.font = `${obsSize/2}px Arial`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(obs.type === 'coin' ? "$" : "!", obsX, obsY);
+    });
+    
+    // 4. Draw HUD (if not in HTML)
+    // (Optional, can depend on HTML)
+  }
+
+  /**
+   * Set Player Lane directly (from PoseEngine)
+   * @param {number} laneIndex 0, 1, 2
+   */
+  setPlayerLane(laneIndex) {
+    if (laneIndex >= 0 && laneIndex < this.laneCount) {
+      this.playerLane = laneIndex;
     }
   }
 
   /**
-   * 점수 추가
-   * @param {number} points - 추가할 점수
+   * Process Pose Prediction to Game Action
+   * @param {string} className 
    */
-  addScore(points) {
-    this.score += points;
+  onPoseDetected(className) {
+     if (!this.isPlaying) return;
 
-    // 레벨업 로직 (예: 100점마다)
-    if (this.score >= this.level * 100) {
-      this.level++;
-    }
-
-    if (this.onScoreChange) {
-      this.onScoreChange(this.score, this.level);
-    }
+     // Mapping logic could be here or outside
+     // Assuming classes are "Left", "Right", "Center"
+     if (className === "Left" || className === "left") {
+         this.setPlayerLane(0);
+     } else if (className === "Right" || className === "right") {
+         this.setPlayerLane(2);
+     } else if (className === "Center" || className === "center") {
+         this.setPlayerLane(1);
+     }
   }
 
-  /**
-   * 명령 변경 콜백 등록
-   * @param {Function} callback - (command) => void
-   */
-  setCommandChangeCallback(callback) {
-    this.onCommandChange = callback;
-  }
-
-  /**
-   * 점수 변경 콜백 등록
-   * @param {Function} callback - (score, level) => void
-   */
-  setScoreChangeCallback(callback) {
-    this.onScoreChange = callback;
-  }
-
-  /**
-   * 게임 종료 콜백 등록
-   * @param {Function} callback - (finalScore, finalLevel) => void
-   */
-  setGameEndCallback(callback) {
-    this.onGameEnd = callback;
-  }
-
-  /**
-   * 현재 게임 상태 반환
-   */
+  // --- Callback Setters ---
+  setScoreChangeCallback(cb) { this.onScoreChange = cb; }
+  setGameEndCallback(cb) { this.onGameEnd = cb; }
+  setHpChangeCallback(cb) { this.onHpChange = cb; }
+  
   getGameState() {
     return {
-      isActive: this.isGameActive,
+      isActive: this.isPlaying,
       score: this.score,
       level: this.level,
-      timeRemaining: this.timeLimit,
-      currentCommand: this.currentCommand
+      hp: this.hp
     };
   }
 }
 
-// 전역으로 내보내기
+// Export
 window.GameEngine = GameEngine;

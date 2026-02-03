@@ -8,8 +8,13 @@
   <body>
     <h1>Teachable Machine Pose Model</h1>
     <div class="button-container">
-      <button type="button" id="startBtn" onclick="init()">Start</button>
+      <button type="button" id="startBtn" onclick="init()">Camera Start</button>
+      <button type="button" id="playBtn" onclick="startGameMode()">Play Game</button>
       <button type="button" id="stopBtn" onclick="stop()" disabled>Stop</button>
+    </div>
+    <div class="game-info">
+      <span id="scoreDisplay">Score: 0</span>
+      <span id="hpDisplay">HP: ❤️❤️❤️</span>
     </div>
     <div class="canvas-container">
       <canvas id="canvas"></canvas>
