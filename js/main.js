@@ -5,12 +5,32 @@
  * PoseEngine, GameEngine, Stabilizer를 조합하여 애플리케이션을 구동
  */
 
-// 전역 변수
 let poseEngine;
 let gameEngine;
 let stabilizer;
 let ctx;
 let labelContainer;
+let soundManager;
+let currentGameId = 1; // Default to 1
+let animationFrameId; // For Game 2 loop
+
+// Game Selection Logic
+window.selectGame = function (id) {
+  currentGameId = id;
+  document.getElementById("game-selector").style.display = "none";
+  document.getElementById("game-container").style.display = "block";
+
+  // Reset UI text
+  const title = id === 1 ? "Game 1: 장애물 피하기" : "Game 2: 슈퍼마리오";
+  document.querySelector("h1").innerText = title;
+}
+
+window.backToMenu = function () {
+  stop(); // Ensure everything stops
+  document.getElementById("game-selector").style.display = "flex";
+  document.getElementById("game-container").style.display = "none";
+  document.querySelector("h1").innerText = "Teachable Machine Pose Model";
+}
 
 /**
  * 애플리케이션 초기화
@@ -21,43 +41,71 @@ async function init() {
 
   startBtn.disabled = true;
 
+  // Audio Context Unlock (Browser Policy)
   try {
-    // 1. PoseEngine 초기화
-    poseEngine = new PoseEngine("./my_model/");
-    const { maxPredictions, webcam } = await poseEngine.init({
-      size: 400, // 게임 화면을 위해 크기 증가 권장 (원본 비율 유지)
-      flip: true
-    });
+    if (!soundManager) {
+      soundManager = new SoundManager();
+    }
+    soundManager.init();
+  } catch (e) {
+    console.warn("Audio init failed:", e);
+  }
 
-    // 2. Stabilizer 초기화
-    stabilizer = new PredictionStabilizer({
-      threshold: 0.8, // 민감도 조절
-      smoothingFrames: 3
-    });
-
-    // 3. GameEngine 초기화
-    gameEngine = new GameEngine();
-
-    // 4. 캔버스 설정
+  try {
+    // 5. 캔버스 설정 (Common)
     const canvas = document.getElementById("canvas");
     canvas.width = 400; // 게임 영역 크기
     canvas.height = 400;
     ctx = canvas.getContext("2d");
 
-    // 5. Label Container 설정
-    labelContainer = document.getElementById("label-container");
-    labelContainer.innerHTML = ""; // 초기화
-    for (let i = 0; i < maxPredictions; i++) {
-      labelContainer.appendChild(document.createElement("div"));
+    if (currentGameId === 1) {
+      // --- GAME 1: Pose Controlled ---
+
+      // 1. PoseEngine 초기화
+      poseEngine = new PoseEngine("./my_model/");
+      const { maxPredictions, webcam } = await poseEngine.init({
+        size: 400, // 게임 화면을 위해 크기 증가 권장 (원본 비율 유지)
+        flip: true
+      });
+
+      // 2. Stabilizer 초기화
+      stabilizer = new PredictionStabilizer({
+        threshold: 0.8, // 민감도 조절
+        smoothingFrames: 3
+      });
+
+      // 4. GameEngine 초기화
+      gameEngine = new GameEngine(soundManager);
+
+      // 5. Label Container 설정
+      labelContainer = document.getElementById("label-container");
+      labelContainer.innerHTML = ""; // 초기화
+      for (let i = 0; i < maxPredictions; i++) {
+        labelContainer.appendChild(document.createElement("div"));
+      }
+
+      // 6. PoseEngine 콜백 설정
+      poseEngine.setPredictionCallback(handlePrediction);
+      // Draw callback에서 게임 렌더링도 같이 처리
+      poseEngine.setDrawCallback(gameLoop);
+
+      // 7. PoseEngine 시작
+      poseEngine.start();
+
+    } else {
+      // --- GAME 2: Keyboard Controlled (Optimized) ---
+      console.log("Initializing Game 2 (No PoseNet)...");
+
+      // 4. GameEngine 초기화
+      gameEngine = new Game2Engine(soundManager);
+
+      // Clear Label Container
+      labelContainer = document.getElementById("label-container");
+      if (labelContainer) labelContainer.innerHTML = "Keyboard Mode";
+
+      // Start dedicated loop
+      startGame2Loop();
     }
-
-    // 6. PoseEngine 콜백 설정
-    poseEngine.setPredictionCallback(handlePrediction);
-    // Draw callback에서 게임 렌더링도 같이 처리
-    poseEngine.setDrawCallback(gameLoop);
-
-    // 7. PoseEngine 시작
-    poseEngine.start();
 
     stopBtn.disabled = false;
 
@@ -83,7 +131,13 @@ function setupGameUI() {
 
   gameEngine.setHpChangeCallback((hp) => {
     const hpEl = document.getElementById("hpDisplay");
-    if (hpEl) hpEl.innerText = `HP: ${"❤️".repeat(hp)}`;
+    if (hpEl) {
+      if (typeof hp === 'number') {
+        hpEl.innerText = `HP: ${"❤️".repeat(Math.max(0, hp))}`;
+      } else {
+        hpEl.innerText = "";
+      }
+    }
   });
 
   gameEngine.setGameEndCallback((score, level) => {
@@ -102,6 +156,11 @@ function stop() {
 
   if (poseEngine) {
     poseEngine.stop();
+  }
+
+  if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
   }
 
   if (gameEngine) {
@@ -176,6 +235,11 @@ function startGameMode() {
     return;
   }
 
+  // Ensure AudioContext is ready (user gesture)
+  if (soundManager) {
+    soundManager.init();
+  }
+
   // 설정 전달
   gameEngine.start({
     // timeLimit: 0 // 무제한
@@ -186,4 +250,18 @@ function startGameMode() {
 
 // 전역 함수 노출 (HTML 버튼에서 호출용)
 window.startGameMode = startGameMode;
+
+/**
+ * Game 2 Dedicated Loop (No PoseNet)
+ */
+function startGame2Loop() {
+  function loop() {
+    if (gameEngine) {
+      gameEngine.update();
+      gameEngine.draw(ctx, ctx.canvas.width, ctx.canvas.height);
+    }
+    animationFrameId = requestAnimationFrame(loop);
+  }
+  loop();
+}
 
