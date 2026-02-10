@@ -22,27 +22,6 @@ class Game2Engine {
         this.enemySpawnRate = 60; // Frames
         this.itemSpawnRate = 100;
 
-
-
-        // Bind methods
-        this.handleKeyDown = this.handleKeyDown.bind(this);
-        this.handleKeyUp = this.handleKeyUp.bind(this);
-
-        // Callbacks
-        this.onScoreChange = null;
-        this.onGameEnd = null;
-        this.onHpChange = null;
-
-        // Assets
-        this.playerImage = new Image();
-        this.playerImage.src = "./assets/player_game2.png";
-
-        this.enemyImage = new Image();
-        this.enemyImage.src = "./assets/enemy_ground.png";
-
-        this.starImage = new Image();
-        this.starImage.src = "./assets/star.png";
-
         // Bind methods
         this.handleKeyDown = this.handleKeyDown.bind(this);
         this.handleKeyUp = this.handleKeyUp.bind(this);
@@ -187,6 +166,8 @@ class Game2Engine {
             let hitEnemy = false;
             for (let j = this.enemies.length - 1; j >= 0; j--) {
                 let enemy = this.enemies[j];
+                if (enemy.dead) continue; // Skip dead enemies
+
                 const dx = fb.x - enemy.x;
                 const dy = fb.y - enemy.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
@@ -197,8 +178,8 @@ class Game2Engine {
                     this.score += 50;
                     if (this.onScoreChange) this.onScoreChange(this.score, 1);
                     if (this.soundManager) this.soundManager.playHit(); // Explosion sound?
-                    this.enemies.splice(j, 1);
-                    break; // One fireball kills one enemy (or pass through? Req: "disappears")
+                    enemy.dead = true; // Mark as dead
+                    break; // One fireball kills one enemy
                 }
             }
 
@@ -210,6 +191,7 @@ class Game2Engine {
         // 4. Move Enemies (Chaser) & Check Wall Enemy Lifetime
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             let enemy = this.enemies[i];
+            if (enemy.dead) continue; // Skip dead enemies
 
             if (enemy.type === 'chaser') {
                 const dx = this.player.x - enemy.x;
@@ -235,6 +217,7 @@ class Game2Engine {
                 for (let k = this.enemies.length - 1; k >= 0; k--) {
                     if (i === k) continue; // Don't check self
                     let other = this.enemies[k];
+                    if (other.dead) continue;
 
                     const dx = enemy.x - other.x;
                     const dy = enemy.y - other.y;
@@ -243,81 +226,13 @@ class Game2Engine {
                     if (dist < (enemy.size / 2 + other.size / 2)) {
                         // Crash! Both explode
                         if (this.soundManager) this.soundManager.playHit();
-
-                        // Remove both. Be careful with indices.
-                        // If k > i, remove k then i.
-                        // If k < i, remove i then k.
-                        // Simplified: Mark for removal or just splice carefully.
-                        // Since we are iterating i backwards, if k < i, we can splice k but i index shifts? No, i is greater.
-
-                        // Let's just remove 'other' and break 'i' loop by removing 'enemy'
-                        // Check if 'other' is also a bullet? Maybe bullets pass through each other?
-                        // "Destroys other enemies on contact" - usually implies crashing into valid targets.
-
-                        this.enemies.splice(Math.max(i, k), 1);
-                        this.enemies.splice(Math.min(i, k), 1);
-
-                        // Adjust outer loop index 'i' if needed? 
-                        // We are going backwards. If we remove i, we just continue.
-                        // If we removed k (where k < i), i index shifts down by 1.
-                        // If we removed k (where k > i), i index is unaffected.
-                        // But wait, k loop is also backwards? No, we just started a loop.
-                        // Actually, colliding with 1 enemy is enough to destroy bullet.
-                        // So we remove 'other' and 'bullet' (this enemy).
-
-                        // Re-logic:
-                        // 1. Mark 'bullet' as dead.
-                        // 2. Mark 'other' as dead.
-                        // 3. Splice them.
-
-                        // Simpler: Just splice both and break.
-                        // Since we modify the array we are iterating, we must be careful.
-                        // Current loop is "i".
-                        // If we remove 'i', we must `continue` outer loop.
-
-                        // Correct approach:
-                        // Use a "toRemove" set? Or just handle it directly.
-
-                        // Since 'bullet' hits ONE thing and explodes:
-                        // 1. Remove 'other' (index k)
-                        // 2. Remove 'bullet' (index i)
-                        // 3. Loop variables?
-
-                        // Note: If k < i, removing k shifts i down.
-                        // If k > i, removing k doesn't shift i.
-                        // Since we iterate i backwards, we have processed i+1..N.
-                        // k can be anywhere.
-
-                        // Let's assume K can be < i.
-                        if (k < i) {
-                            this.enemies.splice(i, 1);
-                            this.enemies.splice(k, 1);
-                            // i has been removed, so we continue outer loop
-                        } else {
-                            // k > i
-                            this.enemies.splice(k, 1);
-                            this.enemies.splice(i, 1);
-                        }
-
-                        // Break out of K loop as bullet is gone.
-                        // And continue outer I loop (which is practically done for this iteration)
-                        // But we need to signal to stop processing 'enemy' in outer loop.
-                        // We can set a flag or just 'i--' (wait, we are in for loop)
-
-                        // The 'continue' in outer loop is needed.
-                        // But we can't 'continue' outer loop from inner loop easily without label.
-                        // Let's use label.
-
-                        // Actually, let's just use a flag `bulletDead`.
-                        break; // Breaks K loop
+                        enemy.dead = true;
+                        other.dead = true;
+                        break;
                     }
                 }
 
-                // If we broke K loop because bullet died, we need to know.
-                // Checking if enemy exists at index i?
-                if (this.enemies[i] !== enemy) {
-                    continue; // Bullet was removed
-                }
+                if (enemy.dead) continue;
 
             } else if (enemy.type === 'wall') {
                 // Animation State Machine
@@ -342,7 +257,7 @@ class Game2Engine {
                 } else if (enemy.state === 'despawn') {
                     enemy.animProgress += ANIM_SPEED;
                     if (enemy.animProgress >= 1) {
-                        this.enemies.splice(i, 1);
+                        enemy.dead = true; // Mark as dead
                         continue;
                     }
                     // Lerp from Target back to Start
@@ -350,6 +265,8 @@ class Game2Engine {
                     enemy.y = enemy.targetY + (enemy.startY - enemy.targetY) * enemy.animProgress;
                 }
             }
+
+            if (enemy.dead) continue;
 
             // Collision with Player
             const dx = this.player.x - enemy.x;
@@ -362,7 +279,7 @@ class Game2Engine {
                     this.score += 50;
                     if (this.onScoreChange) this.onScoreChange(this.score, 1);
                     if (this.soundManager) this.soundManager.playHit();
-                    this.enemies.splice(i, 1);
+                    enemy.dead = true;
                 } else if (this.player.hasFirePower) {
                     // Lost Ability
                     this.player.hasFirePower = false;
@@ -423,6 +340,9 @@ class Game2Engine {
                 this.items.splice(i, 1);
             }
         }
+
+        // Remove dead enemies
+        this.enemies = this.enemies.filter(e => !e.dead);
     }
 
     spawnEnemy() {
@@ -440,25 +360,25 @@ class Game2Engine {
                 ey = -size;
                 vx = 0;
                 vy = speed;
-                rotation = 90 * Math.PI / 180;
+                rotation = (90 * Math.PI / 180) + Math.PI; // Flip 180
             } else if (edge === 1) { // Bottom -> Up
                 ex = Math.random() * 400;
                 ey = 400 + size;
                 vx = 0;
                 vy = -speed;
-                rotation = -90 * Math.PI / 180;
+                rotation = (-90 * Math.PI / 180) + Math.PI; // Flip 180
             } else if (edge === 2) { // Left -> Right
                 ex = -size;
                 ey = Math.random() * 400;
                 vx = speed;
                 vy = 0;
-                rotation = 0;
+                rotation = 0 + Math.PI; // Flip 180
             } else { // Right -> Left
                 ex = 400 + size;
                 ey = Math.random() * 400;
                 vx = -speed;
                 vy = 0;
-                rotation = 180 * Math.PI / 180;
+                rotation = (180 * Math.PI / 180) + Math.PI; // Flip 180
             }
 
             this.enemies.push({
