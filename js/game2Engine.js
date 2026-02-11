@@ -58,6 +58,12 @@ class Game2Engine {
 
         this.enemyBulletImage = new Image();
         this.enemyBulletImage.src = "./assets/enemy_bullet.png";
+
+        this.bossImage = new Image();
+        this.bossImage.src = "./assets/boss_bowser.png";
+
+        this.axeImage = new Image();
+        this.axeImage.src = "./assets/item_axe.png";
     }
 
     start() {
@@ -66,7 +72,11 @@ class Game2Engine {
         this.player = { x: 200, y: 200, size: 60, speed: 4, color: '#00ffff', hasFirePower: false };
         this.fireCooldown = 0; // Cooldown for shooting
         this.enemies = [];
+        this.enemies = [];
         this.items = [];
+        this.boss = null; // Boss object
+        this.axe = null; // Axe object
+        this.bossSpawned = false; // Flag to prevent multiple spawns
         this.keys = {};
         this.spawnTimer = 0;
         this.invincibleTimer = 0; // 0 = normal, > 0 = invincible
@@ -143,6 +153,11 @@ class Game2Engine {
         if (this.spawnTimer % this.enemySpawnRate === 0) this.spawnEnemy();
         if (this.spawnTimer % this.itemSpawnRate === 0) this.spawnItem();
 
+        // Boss Spawning (20 seconds = 1200 frames)
+        if (this.spawnTimer === 1200 && !this.bossSpawned) {
+            this.spawnBoss();
+        }
+
         // 3. Update Fireballs
         for (let i = this.fireballs.length - 1; i >= 0; i--) {
             let fb = this.fireballs[i];
@@ -180,6 +195,32 @@ class Game2Engine {
                     if (this.soundManager) this.soundManager.playHit(); // Explosion sound?
                     enemy.dead = true; // Mark as dead
                     break; // One fireball kills one enemy
+                }
+            }
+
+            // Collision with Boss
+            if (this.boss && this.boss.active) {
+                const dx = fb.x - this.boss.x;
+                const dy = fb.y - this.boss.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < (fb.size / 2 + this.boss.size / 2)) {
+                    // Hit Boss
+                    hitEnemy = true;
+                    this.boss.hp--;
+                    if (this.soundManager) this.soundManager.playHit();
+
+                    // Boss Hit Effect (Flash red?)
+                    this.boss.hitTimer = 10;
+
+                    if (this.boss.hp <= 0) {
+                        this.boss.dead = true;
+                        this.boss.active = false;
+                        this.axe = null; // Remove Axe if Boss dies
+                        this.score += 5000;
+                        if (this.onScoreChange) this.onScoreChange(this.score, 1);
+                        if (this.soundManager) this.soundManager.playLevelUp(); // Victory sound
+                    }
                 }
             }
 
@@ -341,6 +382,64 @@ class Game2Engine {
             }
         }
 
+        // 6. Boss Logic
+        if (this.boss && this.boss.active && !this.boss.dead) {
+            // Movement (Chase Player)
+            const dx = this.player.x - this.boss.x;
+            const dy = this.player.y - this.boss.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist > 0) {
+                this.boss.x += (dx / dist) * this.boss.speed;
+                this.boss.y += (dy / dist) * this.boss.speed;
+            }
+
+            if (this.boss.hitTimer > 0) this.boss.hitTimer--;
+
+            // Collision with Player
+            if (dist < (this.player.size / 2 + this.boss.size / 2)) {
+                if (this.invincibleTimer > 0) {
+                    // Star Power: Boss does NOT die.
+                    // Player is invincible, so nothing happens.
+                } else {
+                    // Boss kills Player (or damages)
+                    // Boss is strong, maybe instant kill? Or just normal damage
+                    // User said: "다른적에 맞아도 죽지않아" (Boss doesn't die to other enemies)
+                    // User didn't specify Player damage, assuming standard behavior (damage/death)
+
+                    this.hp--;
+                    if (this.onHpChange) this.onHpChange(this.hp);
+                    if (this.soundManager) this.soundManager.playHit();
+
+                    if (this.hp <= 0) {
+                        this.gameOver();
+                    } else {
+                        this.invincibleTimer = 60;
+                    }
+                }
+            }
+        }
+
+        // 7. Axe Logic
+        if (this.axe) {
+            const dx = this.player.x - this.axe.x;
+            const dy = this.player.y - this.axe.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < (this.player.size / 2 + this.axe.size / 2)) {
+                // Collect Axe
+                this.axe = null; // Remove axe
+                if (this.boss && this.boss.active) {
+                    this.boss.dead = true;
+                    this.boss.active = false;
+                    this.score += 5000;
+                    if (this.onScoreChange) this.onScoreChange(this.score, 1);
+                    if (this.soundManager) this.soundManager.playLevelUp();
+                    // Maybe clear all enemies too?
+                }
+            }
+        }
+
         // Remove dead enemies
         this.enemies = this.enemies.filter(e => !e.dead);
     }
@@ -467,7 +566,7 @@ class Game2Engine {
     }
 
     spawnItem() {
-        this.items = []; // Only one item at a time
+        if (this.items.length >= 2) return; // Max 2 items on screen
 
         const rand = Math.random();
         let type = 'coin';
@@ -506,6 +605,32 @@ class Game2Engine {
         });
     }
 
+    spawnBoss() {
+        this.bossSpawned = true;
+
+        // Spawn Boss (Top Center or Random)
+        this.boss = {
+            x: 200,
+            y: -100, // Comes from top
+            size: 80,
+            speed: 2.0, // Slower than player
+            hp: 20,
+            maxHp: 20,
+            active: true,
+            dead: false,
+            hitTimer: 0
+        };
+
+        // Spawn Axe
+        this.axe = {
+            x: 50 + Math.random() * 300,
+            y: 50 + Math.random() * 300,
+            size: 40
+        };
+
+        if (this.soundManager) this.soundManager.playLevelUp(); // Warning sound?
+    }
+
     draw(ctx, width, height) {
         // Background
         ctx.fillStyle = "#4caf50"; // Green background
@@ -529,6 +654,39 @@ class Game2Engine {
                     ctx.fill();
                 }
             });
+
+            // Draw Axe
+            if (this.axe) {
+                if (this.axeImage && this.axeImage.complete) {
+                    ctx.drawImage(this.axeImage, this.axe.x - this.axe.size / 2, this.axe.y - this.axe.size / 2, this.axe.size, this.axe.size);
+                } else {
+                    ctx.fillStyle = "gold";
+                    ctx.font = "30px Arial";
+                    ctx.fillText("AXE", this.axe.x, this.axe.y);
+                }
+            }
+
+            // Draw Boss
+            if (this.boss && this.boss.active && !this.boss.dead) {
+                if (this.boss.hitTimer > 0) {
+                    ctx.globalAlpha = 0.5; // Flash when hit
+                }
+
+                if (this.bossImage && this.bossImage.complete) {
+                    ctx.drawImage(this.bossImage, this.boss.x - this.boss.size / 2, this.boss.y - this.boss.size / 2, this.boss.size, this.boss.size);
+                } else {
+                    ctx.fillStyle = "purple";
+                    ctx.fillRect(this.boss.x - this.boss.size / 2, this.boss.y - this.boss.size / 2, this.boss.size, this.boss.size);
+                }
+
+                ctx.globalAlpha = 1.0;
+
+                // Draw Boss HP Bar
+                ctx.fillStyle = "red";
+                ctx.fillRect(this.boss.x - 40, this.boss.y - 50, 80, 10);
+                ctx.fillStyle = "lime";
+                ctx.fillRect(this.boss.x - 40, this.boss.y - 50, 80 * (this.boss.hp / this.boss.maxHp), 10);
+            }
 
             // Draw Fireballs
             this.fireballs.forEach(fb => {
